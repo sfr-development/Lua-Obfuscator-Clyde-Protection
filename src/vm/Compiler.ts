@@ -187,6 +187,22 @@ function compileCallMulti(ctx: CompileContext, exp: Expression, nResults: number
   }
 }
 
+function compileTailCall(ctx: CompileContext, exp: Expression): void {
+  const c = ctx.chunk;
+  if (exp.type === "MethodCallExpression") {
+    compileExpression(ctx, exp.object);
+    emit(c, Op.DUP);
+    emit(c, Op.PUSH_K, addConst(c, exp.method)); emit(c, Op.GET_TABLE);
+    emit(c, Op.SWAP);
+    for (const a of exp.args) compileExpression(ctx, a);
+    emit(c, Op.TAILCALL, exp.args.length + 1);
+  } else if (exp.type === "CallExpression") {
+    compileExpression(ctx, exp.callee);
+    for (const a of exp.args) compileExpression(ctx, a);
+    emit(c, Op.TAILCALL, exp.args.length);
+  }
+}
+
 function compileFunctionBody(
   ctx: CompileContext,
   params: { name: string; variadic?: boolean }[],
@@ -753,11 +769,11 @@ function compileStatement(ctx: CompileContext, stmt: Statement | LastStatement):
       const bodySlotStart = ctx.nextSlot;
       for (const s of stmt.body) compileStatement(ctx, s);
       const bodySlotEnd = ctx.nextSlot;
-      popScope(ctx, prev);
       resolveContinues(ctx);
 
       for (let s = bodySlotStart; s < bodySlotEnd; s++) emit(c, Op.CLOSE_UPVAL, s);
       compileExpression(ctx, stmt.condition);
+      popScope(ctx, prev);
 
       const jmpBack = c.code.length;
       emit(c, Op.JMP_F, bodyStart);
@@ -954,7 +970,9 @@ function compileStatement(ctx: CompileContext, stmt: Statement | LastStatement):
         const nVals = stmt.values.length;
         const lastVal = stmt.values[nVals - 1];
 
-        if (nVals === 1 && isCallLike(lastVal)) {
+        if (nVals === 1 && isCallLike(lastVal) && !hasSpreadArg((lastVal as any).args) && ctx.parentCtx) {
+          compileTailCall(ctx, lastVal);
+        } else if (nVals === 1 && isCallLike(lastVal)) {
 
           compileCallMulti(ctx, lastVal, -1);
           emit(c, Op.RETURN, -1);

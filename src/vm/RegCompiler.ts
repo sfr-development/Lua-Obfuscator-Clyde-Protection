@@ -642,6 +642,25 @@ function compileCallMultiReg(ctx: Ctx, exp: Expression, base: number, nResults: 
   }
 }
 
+function compileTailCall(ctx: Ctx, exp: Expression): void {
+  const c = ctx.chunk;
+  const base = ctx.freeReg;
+  if (exp.type === "MethodCallExpression") {
+    const args = exp.args || [];
+    reserveRegs(ctx, base, 2 + args.length + 1);
+    const objReg = compileExpr(ctx, exp.object, -1);
+    regEmit(c, RegOp.SELF, base, objReg, constRK(ctx, exp.method));
+    for (let i = 0; i < args.length; i++) compileExpr(ctx, args[i], base + 2 + i);
+    regEmit(c, RegOp.TAILCALL, base, args.length + 2, 0);
+  } else if (exp.type === "CallExpression") {
+    const args = exp.args || [];
+    reserveRegs(ctx, base, 1 + args.length + 1);
+    compileExpr(ctx, exp.callee, base);
+    for (let i = 0; i < args.length; i++) compileExpr(ctx, args[i], base + 1 + i);
+    regEmit(c, RegOp.TAILCALL, base, args.length + 1, 0);
+  }
+}
+
 function compileFunctionBody(
   ctx: Ctx,
   params: Param[],
@@ -1215,7 +1234,9 @@ function compileReturn(ctx: Ctx, stmt: any): void {
   const lastVal = stmt.values[nVals - 1];
   const spread = isCallLike(lastVal) || lastVal.type === "VarargExpression";
 
-  if (nVals === 1 && isCallLike(lastVal)) {
+  if (nVals === 1 && isCallLike(lastVal) && !hasSpread((lastVal as any).args)) {
+    compileTailCall(ctx, lastVal);
+  } else if (nVals === 1 && isCallLike(lastVal)) {
     const base = ctx.freeReg;
     compileCallMultiReg(ctx, lastVal, base, 0);
     regEmit(c, RegOp.RETURN, base, 0);

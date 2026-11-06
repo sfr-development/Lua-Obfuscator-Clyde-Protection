@@ -120,33 +120,47 @@ function transformStatement(stmt: Statement | LastStatement, scope: ScopeManager
   switch (stmt.type) {
     case "LocalStatement": {
       const values = stmt.values?.map((e) => transformExpression(e, scope));
-      const vars = stmt.vars.map((v) => ({
-        ...v,
-        name: scope.declare(v.name),
-      }));
+      const vars = stmt.vars.map((v) => {
+        const nv: any = {
+          ...v,
+          name: scope.declare(v.name),
+        };
+        if (v.type) nv.type = fixType(v.type, scope);
+        return nv;
+      });
       return { ...stmt, vars, values };
     }
     case "LocalFunctionStatement": {
       const name = scope.declare(stmt.name);
       scope.pushScope();
-      const params = stmt.params.map((p) => ({
-        ...p,
-        name: p.variadic ? "..." : scope.declare(p.name),
-      }));
+      const params = stmt.params.map((p) => {
+        const np: any = {
+          ...p,
+          name: p.variadic ? "..." : scope.declare(p.name),
+        };
+        if (np.typeAnnotation) np.typeAnnotation = fixType(np.typeAnnotation, scope);
+        return np;
+      });
+      const ret = stmt.returnType ? fixType(stmt.returnType, scope) : stmt.returnType;
       const body = stmt.body.map((s) => transformStatement(s, scope));
       scope.popScope();
-      return { ...stmt, name, params, body };
+      return { ...stmt, name, params, returnType: ret, body };
     }
     case "FunctionStatement": {
       const name = transformFuncName(stmt.name, scope);
       scope.pushScope();
-      const params = stmt.params.map((p) => ({
-        ...p,
-        name: p.variadic ? "..." : scope.declare(p.name),
-      }));
+      const params = stmt.params.map((p) => {
+        const np: any = {
+          ...p,
+          name: p.variadic ? "..." : scope.declare(p.name),
+        };
+        if (np.typeAnnotation) np.typeAnnotation = fixType(np.typeAnnotation, scope);
+        return np;
+      });
+      const ret = stmt.returnType ? fixType(stmt.returnType, scope) : stmt.returnType;
       const body = stmt.body.map((s) => transformStatement(s, scope));
       scope.popScope();
-      return { ...stmt, name, params, body };
+      return { ...stmt, name, params, returnType: ret, body };
     }
     case "ForNumericStatement": {
       scope.pushScope();
@@ -178,6 +192,9 @@ function transformStatement(stmt: Statement | LastStatement, scope: ScopeManager
         body,
       };
     }
+    case "TypeStatement":
+    case "ExportTypeStatement":
+      return { ...stmt, value: fixType((stmt as any).value, scope) } as any;
     case "TypeFunctionStatement":
     case "ExportTypeFunctionStatement": {
       scope.pushScope();
@@ -206,11 +223,12 @@ function transformStatement(stmt: Statement | LastStatement, scope: ScopeManager
     case "RepeatStatement":
       scope.pushScope();
       const repeatBody = stmt.body.map((s) => transformStatement(s, scope));
+      const repeatCond = transformExpression(stmt.condition, scope);
       scope.popScope();
       return {
         ...stmt,
         body: repeatBody,
-        condition: transformExpression(stmt.condition, scope),
+        condition: repeatCond,
       };
     case "IfStatement":
       scope.pushScope();
@@ -365,4 +383,57 @@ function transformExpression(exp: Expression, scope: ScopeManager): Expression {
     default:
       return exp;
   }
+}
+
+function fixType(t: any, scope: ScopeManager): any {
+  if (!t) return t;
+
+  let out: any = t;
+
+  if (t.type === "TypeofType") {
+    out = { ...t, expression: transformExpression(t.expression, scope) };
+  }
+  else if (t.type === "TableType") {
+    let props = t.props;
+    if (props && props.length) {
+      props = props.map((p: any) => {
+        if (p.type === "TableIndexerType") {
+          return { ...p, indexType: fixType(p.indexType, scope), valueType: fixType(p.valueType, scope) };
+        }
+        if (p.type === "TablePropType") {
+          return { ...p, propType: fixType(p.propType, scope) };
+        }
+        return p;
+      });
+    }
+    out = { ...t, props: props, arrayType: t.arrayType ? fixType(t.arrayType, scope) : t.arrayType };
+  }
+  else if (t.type === "FunctionType") {
+    const params = t.params.map((p: any) => {
+      if (p.type === "GenericTypePack") return p;
+      if (p.type === "VariadicTypePack") return { ...p, inner: fixType(p.inner, scope) };
+      return { ...p, type: fixType(p.type, scope) };
+    });
+    out = { ...t, params: params, returnType: fixType(t.returnType, scope) };
+  }
+  else if (t.type === "UnionType") {
+    out = { ...t, types: t.types.map((x: any) => ({ ...x, type: fixType(x.type, scope) })) };
+  }
+  else if (t.type === "IntersectionType") {
+    out = { ...t, types: t.types.map((x: any) => fixType(x, scope)) };
+  }
+  else if (t.type === "ParenType") {
+    out = { ...t, inner: fixType(t.inner, scope) };
+  }
+  else if (t.type === "IdentifierType" && t.typeParams) {
+    out = { ...t, typeParams: t.typeParams.map((x: any) => fixType(x, scope)) };
+  }
+  else if (t.type === "TypePack") {
+    out = { ...t, types: t.types.map((x: any) => fixType(x, scope)) };
+  }
+  else if (t.type === "VariadicTypePack") {
+    out = { ...t, inner: fixType(t.inner, scope) };
+  }
+
+  return out;
 }

@@ -2173,6 +2173,9 @@ interface NameMap {
   retTop: string;
   retN: string;
   retPack: string;
+  tailFn: string;
+  tailArgs: string;
+  tailN: string;
   getLocal: string;
   setLocal: string;
   boxLocal: string;
@@ -2202,6 +2205,7 @@ function createNames(level: VMGenLevel): NameMap {
       doReturn: "_doReturn", retFromStack: "_retFromStack",
       retBase: "_retBase", retTop: "_retTop", retN: "_retN",
       retPack: "_retPack",
+      tailFn: "_tailFn", tailArgs: "_tailArgs", tailN: "_tailN",
       getLocal: "getLocal", setLocal: "setLocal", boxLocal: "boxLocal",
       push: "push", pop: "pop", top: "top",
       getMM: "getMM", arithMM: "arithMM",
@@ -2224,6 +2228,7 @@ function createNames(level: VMGenLevel): NameMap {
     doReturn: randomName(4), retFromStack: randomName(5),
     retBase: randomName(4), retTop: randomName(4), retN: randomName(3),
     retPack: randomName(4),
+    tailFn: randomName(4), tailArgs: randomName(5), tailN: randomName(3),
     getLocal: randomName(5), setLocal: randomName(5), boxLocal: randomName(5),
     push: randomName(3), pop: randomName(3), top: randomName(3),
     getMM: randomName(4), arithMM: randomName(5),
@@ -2242,7 +2247,7 @@ function buildHandlerTemplates(n: NameMap, doNonLinearJumps: boolean = false, pr
     upvalues, varargs, varargCount, locals, localBoxes,
     callBases, callBaseTop, getLocal, setLocal, boxLocal,
     getMM, arithMM, doReturn, retFromStack, retBase, retTop,
-    retN, retPack, run, resolveK
+    retN, retPack, tailFn, tailArgs, tailN, run, resolveK
   } = n;
 
   h[0] = `function() end`;
@@ -2320,7 +2325,7 @@ function buildHandlerTemplates(n: NameMap, doNonLinearJumps: boolean = false, pr
 
   h[40] = `function() local n=${code}[${ip}];${ip}=${ip}+1;if n<0 then for i=1,${varargCount} do ${push}(${varargs}[i]) end else for i=1,n do ${push}(${varargs}[i]) end end end`;
 
-  h[41] = `function() local n=${code}[${ip}];${ip}=${ip}+1;local args={};for j=n,1,-1 do args[j]=${pop}() end;local f=${pop}();if type(f)~="function" then local mm=${getMM}(f,"__call");if mm then table.insert(args,1,f);n=n+1;f=mm end end;${doReturn}=true;${retPack}=table.pack(f(table.unpack(args,1,n))) end`;
+  h[41] = `function() local n=${code}[${ip}];${ip}=${ip}+1;local args={};for j=n,1,-1 do args[j]=${pop}() end;local f=${pop}();if type(f)~="function" then local mm=${getMM}(f,"__call");if mm then table.insert(args,1,f);n=n+1;f=mm end end;${tailFn}=f;${tailArgs}=args;${tailN}=n;${doReturn}=true end`;
 
   h[42] = doNonLinearJumps
     ? `function() local off=bit32.bxor(${code}[${ip}],${n.jumpKey});${ip}=${ip}+1;local step=${pop}();local limit=${pop}();local init=${pop}();${push}(init);${push}(limit);${push}(step);if step>=0 then if init>limit then ${ip}=off+1 end else if init<limit then ${ip}=off+1 end end end`
@@ -2778,6 +2783,9 @@ function buildVMFunction(
   lines.push(`local ${n.retTop}=0`);
   lines.push(`local ${n.retN}=0`);
   lines.push(`local ${n.retPack}=nil`);
+  lines.push(`local ${n.tailFn}=nil`);
+  lines.push(`local ${n.tailArgs}=nil`);
+  lines.push(`local ${n.tailN}=0`);
   lines.push(`local ${n.ctxBit}=0`);
   if (doJumpEnc) {
     lines.push(`local ${n.jumpKey}=${toHexInt(jumpKeyVal)}`);
@@ -3162,6 +3170,8 @@ function buildVMFunction(
     lines.push(`if h then h() end`);
     lines.push(`end`);
   }
+
+  lines.push(`if ${n.tailFn} then return ${n.tailFn}(table.unpack(${n.tailArgs},1,${n.tailN})) end`);
 
   if (level === "max") {
 

@@ -107,12 +107,16 @@ export function runVM(
   }
 
   function callFunc(f: unknown, args: unknown[]): unknown {
-    if (typeof f !== "function") {
-      const mm = getMM(f, "__call");
-      if (typeof mm === "function") { f = mm; }
-      else throw new Error(`attempt to call a ${luaToString(f)} value`);
+    for (;;) {
+      if (typeof f !== "function") {
+        const mm = getMM(f, "__call");
+        if (typeof mm === "function") { f = mm; }
+        else throw new Error(`attempt to call a ${luaToString(f)} value`);
+      }
+      const r = (f as Function)(...args);
+      if (r && (r as any).tail === 1) { f = (r as any).f; args = (r as any).a; continue; }
+      return r;
     }
-    return (f as Function)(...args);
   }
 
   while (ip < code.length) {
@@ -373,7 +377,7 @@ export function runVM(
         const args: unknown[] = [];
         for (let j = 0; j < n; j++) args.unshift(pop());
         const f = pop();
-        return callFunc(f, args);
+        return { tail: 1, f, a: args } as any;
       }
       else if (op === Op.CONCAT_MULTI) {
         const n = code[ip++];
